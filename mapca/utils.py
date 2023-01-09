@@ -10,7 +10,7 @@ from scipy.signal import fftconvolve
 from scipy.signal.windows import parzen
 from scipy.stats import kurtosis
 
-LGR = logging.getLogger(__name__)
+LGR = logging.getLogger("GENERAL")
 
 
 def _autocorr(data):

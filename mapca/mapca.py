@@ -28,7 +28,7 @@ from sklearn.preprocessing import StandardScaler
 
 from . import utils
 
-LGR = logging.getLogger(__name__)
+LGR = logging.getLogger("GENERAL")
 
 
 class MovingAveragePCA:
