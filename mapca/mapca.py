@@ -147,6 +147,7 @@ class MovingAveragePCA:
         mask_vec = np.reshape(mask, n_x * n_y * n_z, order="F")
         X = data_nib_V[mask_vec == 1, :]
 
+        print(f"data shape {data.shape} data prod {n_x*n_y*n_z}")
         n_samples = np.sum(mask_vec)
 
         self.scaler_ = StandardScaler(with_mean=True, with_std=True)
@@ -209,6 +210,7 @@ class MovingAveragePCA:
             dim_n = x_single.ndim
 
         sub_iid_sp_median = int(np.round(np.median(sub_iid_sp)))
+        print(f"sub_iid_sp_median {sub_iid_sp_median}")
         if np.floor(np.power(n_samples / n_timepoints, 1 / dim_n)) < sub_iid_sp_median:
             sub_iid_sp_median = int(np.floor(np.power(n_samples / n_timepoints, 1 / dim_n)))
         N = np.round(n_samples / np.power(sub_iid_sp_median, dim_n))
@@ -237,7 +239,7 @@ class MovingAveragePCA:
             eigenvalues = eigenvalues[::-1]
 
         LGR.info("Effective number of i.i.d. samples %d" % N)
-
+        print(f"n_samples {n_samples} subsamples: N {N} scaling {n_samples/N}")
         # Make eigen spectrum adjustment
         LGR.info("Perform eigen spectrum adjustment ...")
         eigenvalues = utils._eigensp_adj(eigenvalues, N, eigenvalues.shape[0])
@@ -299,6 +301,7 @@ class MovingAveragePCA:
         elif self.criterion == "mdl":
             n_components = n_mdl
 
+        print(f"Component count: AIC {n_aic} KIC {n_kic} MDL {n_mdl}")
         LGR.info("Performing PCA")
 
         # PCA with all possible components (the estimated selection is made after)
@@ -354,6 +357,8 @@ class MovingAveragePCA:
         self.n_components_ = n_components
         self.n_features_ = ppca.n_features_
         self.n_samples_ = ppca.n_samples_
+        self.sub_iid_sp_median = sub_iid_sp_median
+        self.N_subsamples = N
         # Commenting out noise variance as it depends on the covariance of the estimation
         # self.noise_variance_ = ppca.noise_variance_
         component_maps = np.dot(
