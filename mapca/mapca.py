@@ -48,7 +48,7 @@ class MovingAveragePCA:
         ``aic`` refers to the Akaike Information Criterion, which is the least aggressive option.
         ``kic`` refers to the Kullback-Leibler Information Criterion, which is the middle option.
     normalize : bool, optional
-        Whether to normalize (zero mean and unit standard deviation) or not. Default is False.
+        Whether to normalize (zero mean and unit standard deviation) or not. Default is True.
 
     Attributes
     ----------
