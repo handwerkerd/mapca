@@ -2,6 +2,7 @@
 
 import logging
 
+import nibabel as nib
 import numpy as np
 from scipy.fftpack import fftn, fftshift
 from scipy.linalg import svd
@@ -177,7 +178,7 @@ def _est_indp_sp(data):
     return n_iters, ent_rate
 
 
-def _subsampling(data, sub_depth):
+def _subsampling(img, sub_depth):
     """
     Subsampling the data evenly with space 'sub_depth'.
 
@@ -193,9 +194,25 @@ def _subsampling(data, sub_depth):
     out : ndarray
         Subsampled data
     """
+    if not isinstance(img, np.ndarray):
+        data = img.get_fdata()
+
+        # Prepare image
+        target_affine = img.affine.copy()
+        diag = np.diag(target_affine).copy()
+        diag[:3] *= sub_depth
+        np.fill_diagonal(target_affine, diag)
+    else:
+        data = img.copy()
     slices = [slice(None, None, sub_depth)] * data.ndim
-    out = data[tuple(slices)]
-    return out
+    subsampled_data = data[tuple(slices)]
+
+    if not isinstance(img, np.ndarray):
+        subsampled_img = nib.Nifti1Image(subsampled_data, target_affine, img.header)
+    else:
+        subsampled_img = subsampled_data
+
+    return subsampled_img
 
 
 def _kurtn(data):

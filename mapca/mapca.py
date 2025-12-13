@@ -22,6 +22,7 @@ import logging
 
 import nibabel as nib
 import numpy as np
+from nilearn import masking
 from nilearn._utils.niimg_conversions import check_niimg_3d, check_niimg_4d
 from scipy.stats import kurtosis
 from sklearn.decomposition import PCA
@@ -139,31 +140,33 @@ class MovingAveragePCA:
         )
 
         img = check_niimg_4d(img)
-        mask = check_niimg_3d(mask)
+        self.mask_img_ = check_niimg_3d(mask)
         data = img.get_fdata()
-        mask = mask.get_fdata()
+        mask_data = self.mask_img_.get_fdata()
 
+        # NOTE: Using F-order reshaping for backward compatibility with existing behavior.
+        # nilearn's apply_mask uses C-order, which would change the voxel ordering.
         [n_x, n_y, n_z, n_timepoints] = data.shape
-        data_nib_v = np.reshape(data, (n_x * n_y * n_z, n_timepoints), order="F")
-        mask_vec = np.reshape(mask, n_x * n_y * n_z, order="F")
-        x = data_nib_v[mask_vec == 1, :]
+        data_nib_V = np.reshape(data, (n_x * n_y * n_z, n_timepoints), order="F")
+        mask_vec = np.reshape(mask_data, n_x * n_y * n_z, order="F")
+        X = data_nib_V[mask_vec == 1, :]
 
-        n_samples = np.sum(mask_vec)
+        n_samples = int(np.sum(mask_vec))
 
         self.scaler_ = StandardScaler(with_mean=True, with_std=True)
         if self.normalize:
             # TODO: determine if tedana is already normalizing before this
-            x = self.scaler_.fit_transform(x.T).T  # This was x_sc
+            X = self.scaler_.fit_transform(X.T).T  # This was x_sc
             # x = ((x.T - x.T.mean(axis=0)) / x.T.std(axis=0)).T
 
         LGR.info("Performing SVD on original data...")
-        v, eigenvalues = utils._icatb_svd(x, n_timepoints)
+        V, eigenvalues = utils._icatb_svd(X, n_timepoints)
         LGR.info("SVD done on original data")
 
         # Reordering of values
         eigenvalues = eigenvalues[::-1]
-        data_n = np.dot(x, v[:, ::-1])
-        # Potentially the small differences come from the different signs on v
+        data_n = np.dot(X, V[:, ::-1])
+        # Potentially the small differences come from the different signs on V
 
         # Using 12 gaussian components from middle, top and bottom gaussian
         # components to determine the subsampling depth.
@@ -193,7 +196,7 @@ class MovingAveragePCA:
 
         # Estimate the subsampling depth for effectively i.i.d. samples
         LGR.info("Estimating the subsampling depth for effective i.i.d samples...")
-        mask_nd = np.reshape(mask_vec, (n_x, n_y, n_z), order="F")
+        mask_3d = np.reshape(mask_data, (n_x, n_y, n_z), order="F")
         sub_depth = len(idx)
         sub_iid_sp = np.zeros((sub_depth,))
         for i in range(sub_depth):
@@ -256,13 +259,13 @@ class MovingAveragePCA:
         n = np.round(n_samples / np.power(sub_iid_sp_median, dim_n))
 
         if sub_iid_sp_median != 1:
-            mask_s = utils._subsampling(mask_nd, sub_iid_sp_median)
+            mask_s = utils._subsampling(mask_3d, sub_iid_sp_median)
             mask_s_1d = np.reshape(mask_s, np.prod(mask_s.shape), order="F")
             dat = np.zeros((int(np.sum(mask_s_1d)), n_timepoints))
             LGR.info("Generating subsampled i.i.d. data...")
             for i_vol in range(n_timepoints):
                 x_single = np.zeros(n_x * n_y * n_z)
-                x_single[mask_vec == 1] = x[:, i_vol]
+                x_single[mask_vec == 1] = X[:, i_vol]
                 x_single = np.reshape(x_single, (n_x, n_y, n_z), order="F")
                 dat0 = utils._subsampling(x_single, sub_iid_sp_median)
                 dat0 = np.reshape(dat0, np.prod(dat0.shape), order="F")
@@ -345,7 +348,7 @@ class MovingAveragePCA:
 
         # PCA with all possible components (the estimated selection is made after)
         ppca = PCA(n_components=None, svd_solver="full", copy=False, whiten=False)
-        ppca.fit(x)
+        ppca.fit(X)
 
         # Get cumulative explained variance as components are added
         cumsum_varexp = np.cumsum(ppca.explained_variance_ratio_)
@@ -407,13 +410,11 @@ class MovingAveragePCA:
         # Commenting out noise variance as it depends on the covariance of the estimation
         # self.noise_variance_ = ppca.noise_variance_
         component_maps = np.dot(
-            np.dot(x, self.components_.T), np.diag(1.0 / self.explained_variance_)
+            np.dot(X, self.components_.T), np.diag(1.0 / self.explained_variance_)
         )
-        component_maps_3d = np.zeros((n_x * n_y * n_z, n_components))
-        component_maps_3d[mask_vec == 1, :] = component_maps
-        component_maps_3d = np.reshape(component_maps_3d, (n_x, n_y, n_z, n_components), order="F")
         self.u_ = component_maps
-        self.u_nii_ = nib.Nifti1Image(component_maps_3d, img.affine, img.header)
+        component_imgs = masking.unmask(component_maps.T, self.mask_img_)
+        self.u_nii_ = component_imgs
 
     def fit(self, img, mask, subsample_depth=None):
         """Fit the model with x.
@@ -514,22 +515,23 @@ class MovingAveragePCA:
         This is different from scikit-learn's approach, which ignores explained variance.
         """
         img = check_niimg_4d(img)
-        mask = check_niimg_3d(mask)
+        mask_img = check_niimg_3d(mask)
         data = img.get_fdata()
-        mask = mask.get_fdata()
+        mask_data = mask_img.get_fdata()
 
+        # NOTE: Using F-order reshaping for backward compatibility with existing behavior.
         [n_x, n_y, n_z, n_components] = data.shape
-        data_nib_v = np.reshape(data, (n_x * n_y * n_z, n_components), order="F")
-        mask_vec = np.reshape(mask, n_x * n_y * n_z, order="F")
-        x = data_nib_v[mask_vec == 1, :]
+        data_nib_V = np.reshape(data, (n_x * n_y * n_z, n_components), order="F")
+        mask_vec = np.reshape(mask_data, n_x * n_y * n_z, order="F")
+        X = data_nib_V[mask_vec == 1, :]
 
-        x_orig = np.dot(np.dot(x, np.diag(self.explained_variance_)), self.components_)
+        X_orig = np.dot(np.dot(X, np.diag(self.explained_variance_)), self.components_)
         if self.normalize:
-            x_orig = self.scaler_.inverse_transform(x_orig.T).T
+            X_orig = self.scaler_.inverse_transform(X_orig.T).T
 
-        n_t = x_orig.shape[1]
+        n_t = X_orig.shape[1]
         out_data = np.zeros((n_x * n_y * n_z, n_t))
-        out_data[mask_vec == 1, :] = x_orig
+        out_data[mask_vec == 1, :] = X_orig
         out_data = np.reshape(out_data, (n_x, n_y, n_z, n_t), order="F")
         img_orig = nib.Nifti1Image(out_data, img.affine, img.header)
         return img_orig
